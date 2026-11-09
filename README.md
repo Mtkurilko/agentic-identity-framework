@@ -1,138 +1,100 @@
-# AIF: Agentic Identity Framework
+# AIF
 
-**A portable, append-only memory of *you* that any AI model can read, knows when to consult, and
-can't quietly corrupt.**
+A personal memory that you own, and that every AI you use can read and add to.
 
-Every assistant is re-learning you from scratch: your stack, your diet, how you like answers, who
-your sister is. Each vendor's memory feature is locked in its own database. AIF is one plain-text,
-git-backed store you own. Claude, GPT, Gemini, local models, Claude Code, Cursor, or a bare chat box
-all read and extend the same memory.
+Each AI app keeps its own memory of you, locked inside that app. Switch from ChatGPT to Claude, or
+from Cursor to Claude Code, and you start over. AIF keeps that memory in a folder on your computer
+instead: plain text files in a git repo. Any assistant that supports MCP can read it and write to
+it, and you can paste it into any chat that doesn't.
 
-```
-$ aif remember food diet vegetarian --since 2019
-saved [k696bbcbbb] food · diet=vegetarian (U 0.95)
+It holds three things:
 
-$ aif remember work employer Acme Corp
-CONFLICT, not saved. `employer` holds one value and the file says: [k02ebc5963] work · employer=Nimbus Labs …
+- **Facts about you and the people in your life.** "Vegetarian since 2019." "My sister Rebecca is 11."
+- **How you want your AI to behave.** Tone, how blunt to be, when to push back, what never to do.
+  This goes with you to every model.
+- **What models have figured out about you.** Kept apart from facts, marked as guesses, and
+  never treated as true until you say so.
 
-$ aif capsule            # ~750 tokens, forever, however much you store
-```
+No accounts and no cloud service. It runs on the Python standard library alone.
 
-## Why it's different
+## Install
 
-- **Models know when to look.** The context block includes a **map** of everything on file but not
-  loaded (`travel 68: visited, airline_avoid, seat_pref`). The MCP `recall` tool's description
-  carries the same map, live. A model about to book your flight can *see* that `seat_pref` exists,
-  so it looks it up instead of guessing.
-- **Flat context cost.** The capsule is filled best-first under a hard token budget. In a simulated
-  decade (2,800 events, 690 current facts), it stayed at 745–769 of 900 tokens. At 5.2 tokens per fact,
-  it costs 16× less than JSON. It is also byte-stable within a day, so prompt caches keep hitting.
-- **Can't be poisoned by its own guesses.** Every fact records *who* said it: **U**ser, model
-  **I**nferred, or **X** imported. A "user said" write needs the user's actual words. One model
-  repeating a guess never raises its confidence. Several independent models agreeing do, but they
-  are capped below "established". Inferences can't overwrite, retract or pin what you stated.
-- **Survives everything.** Append-only JSONL in a git repo, with content-addressed events (edits are
-  detectable even outside git) and union merge, so two devices never conflict. The store includes
-  `AIF.md`, which explains the format to whatever model opens it. There are no dependencies: Python
-  stdlib only, including the MCP server. [`SPEC.md`](SPEC.md) is short enough to re-implement.
-- **Knows the people in your life, and that time passes.** Tell ChatGPT "my sister Rebecca is 11
-  and at Lincoln Middle School". Two years later, ask Claude for a gift for "my sister", and it gets
-  `Rebecca (your sister · age ≈13 (11 as of 2024-09) · aka Becca) … school=Lincoln Middle School
-  (as of 2024-09, 2.0y ago)`, plus the instruction to ask only if that matters. Two sisters give one
-  question ("Anna or Rebecca?"). An unknown "my brother" gives a question, not an invention.
-- **Finds people you describe instead of name.** "The kid I coach" gives `LIKELY: Leo. Why: Leo is
-  ≈11 (minor); you coach Hawks U12 soccer (shared with Leo)`, and says to confirm in passing if
-  acting on it matters. Ambiguous descriptions give a shortlist and one question. An unknown name
-  gives where it has come up.
-- **A world-view, not just a fact list.** Models keep hypotheses about you ("comes alive when
-  teaching", "over-commits in spring") that other models support, contradict and revise over
-  months. Only your own words confirm or refute one, and they never pass as facts.
-- **Private by default where it matters.** Health and finance are `private`, and they show up as counts
-  in the map ("+3 private: ask the user first") rather than content. Pinned items like allergies are
-  always shown.
-
-## Quickstart
+Requires Python 3.9+ and git.
 
 ```bash
-pip install git+https://github.com/<you>/agentic-identity-framework   # or: pip install -e .
+pipx install git+https://github.com/Mtkurilko/agentic-identity-framework
+```
+
+`pip install` works too.
+
+## Set up
+
+**1. Create your memory.** The first run asks five short questions. Skip any you like.
+
+```bash
+aif init
+```
+
+**2. Connect your AI tools.** For Claude Code:
+
+```bash
+claude mcp add aif --scope user -- aif serve
 ```
 
 ```bash
-aif init --owner "Your Name"
+aif hooks install
 ```
 
-```bash
-$EDITOR ~/.aif/core.md
-```
+The hooks are optional, but they do most of the work of making memory stick. See
+[Why it doesn't forget](#why-it-doesnt-forget).
 
-`core.md` holds who you are in your own words, and should stay under ~300 tokens. Then add facts and notes:
+For Claude Desktop, Cursor, Windsurf, Codex and other MCP clients, run `aif setup`. It prints the
+config to paste into each one.
 
-```bash
-aif remember health allergy shellfish --pin
-```
+**3. Use your AI as usual.** When you mention something worth keeping, the model saves it.
+When it needs to know something about you, it looks it up.
 
-```bash
-aif remember style response_style "concise, code first, no filler"
-```
-
-```bash
-aif note travel "Hates red-eyes; took one to Lisbon in 2024 and lost two days"
-```
-
-Connect your tools. This prints ready-to-paste config for Claude Code, Claude Desktop, Cursor, Codex, and more:
-
-```bash
-aif setup
-```
-
-For Claude Code, that's one line:
-
-```bash
-claude mcp add aif --scope user -- python3 -m aif serve
-```
-
-In a chat box with no tools, paste the capsule instead:
+For a chat app without MCP support, copy the summary and paste it in as your first message or
+your custom instructions:
 
 ```bash
 aif capsule | pbcopy
 ```
 
-Your store is a git repo at `~/.aif`. Add a **private** remote and run `aif sync` on each device.
+## Your AI, your way
 
-## People, pets, places, things
-
-```bash
-aif remember family sister Rebecca                       # introduces her: Rebecca is your sister
-```
+`persona.md` describes how you want any assistant to act with you. Write it once and it applies
+to every model, from any company.
 
 ```bash
-aif remember family school "Lincoln Middle School" --subject "my sister" --alias Becca
+aif edit persona
 ```
 
-```bash
-aif recall becca                                         # full dossier, with dates and history
-```
-
-```bash
-aif people
-```
-
-```bash
-aif recall "the kid I coach"                             # descriptive lookup across everyone's profile
-```
-
-```bash
-aif beliefs                                              # what models currently think about you
-```
-
-Models do the same through `remember(subject=…, subject_relation=…)`. `recall("me")` returns your
-own evolving profile.
-
-## How a model sees it
-
-On connect, the MCP server hands the client the **capsule** as `instructions`:
+For example:
 
 ```
+Be direct. If my plan has a hole, say so before helping with it.
+Short answers by default; I'll ask for more.
+Never use exclamation marks or tell me something is a great question.
+```
+
+Models can add to it too. If you tell one "stop apologizing so much", it saves that under the
+`persona` topic, and every other model sees it next time. `core.md` (`aif edit`) is the same kind
+of file, but it describes you rather than your assistant.
+
+To fill everything in at once, run the `get_to_know_me` prompt from any MCP client. The model
+interviews you for a few minutes and saves the answers as it goes.
+
+## What a model sees
+
+When a model connects, it gets a short summary called the capsule. It stays under about 900
+tokens however much you store:
+
+```
+## Persona (how the user wants their AI to be; follow it)
+Be direct. If my plan has a hole, say so before helping with it.
+pushback=on weak plans · tone=dry humor
+
 ## Always true
 health: allergy=shellfish
 
@@ -140,71 +102,142 @@ health: allergy=shellfish
 Rebecca: sister, ≈13, aka Becca · Miso: dog · Priya: manager
 
 ## Active
-family: Rebecca.likes=horses (as of 2024-09) · Rebecca.school=Lincoln Middle School (as of 2024-09)
 food: diet=vegetarian · likes=thai curry, ramen · dislikes=cilantro?
-style: response_style=concise, code first, no filler
 work: employer=Helio Systems · role=founder
 
 ## Map (topic count: top predicates; recall for details)
 travel 68 — visited, airline_avoid, seat_pref +36 notes
-family 5 — sibling, pet, partner +33 notes
 health 1 — allergy (+46 private: ask the user first)
-
-## Check
-If it comes up naturally, re-verify: employer=Helio Systems (last confirmed 2025-01) [k8b68bf158]
 ```
 
-The server exposes three tools:
+The **map** lists what is on file without loading it. A model booking a flight can see that
+`seat_pref` exists, so it calls `recall` instead of guessing. A `?` marks a model's guess the user
+hasn't confirmed. Health and finance details are private by default and appear only as counts.
 
-| tool | purpose |
+The model gets four tools:
+
+| tool | what it does |
 |---|---|
-| `recall(query?, topic?, history?)` | Compact lines with ids, or a person's dossier when the query mentions one ("my sister", "Becca", "me"). No args lists topics. A miss says *ask, don't guess*. |
-| `remember(topic, predicate?, value, source, evidence?, subject?, subject_relation?, …)` | Saves a fact about you or someone/something in your life, or a freeform note if `predicate` is omitted. Returns `CONFLICT` / `POSSIBLE DUPLICATE` / `AMBIGUOUS` / `UNKNOWN` instead of writing when it should ask. |
-| `reflect(propose\|support\|contradict\|revise, text?, id?, reason?, about?)` | Maintains the world-view: hypotheses about you or people in your life, weighed by evidence across models. |
-| `amend(id, confirm\|retract\|pin\|unpin, evidence?)` | Changes status, including the user settling a belief. History is always kept. |
+| `recall` | Look something up by keyword, topic, name ("Becca"), relation ("my sister") or description ("the kid I coach"). |
+| `remember` | Save a fact or note about you or someone in your life. When it should ask first, it returns `CONFLICT`, `POSSIBLE DUPLICATE` or `AMBIGUOUS` instead of saving. |
+| `reflect` | Record, support or challenge a working theory about you ("over-commits in spring"). |
+| `amend` | Confirm, retract, pin, or merge two entries for the same person. |
 
-It also exposes resources `aif://capsule` and `aif://review`, and prompts `about_me` and `memory_review`.
+## Why it doesn't forget
 
-## CLI
+Most memory tools fail quietly: the model never calls them. AIF handles this in three ways.
 
-| command | what it does |
+1. **The tools describe when to use them.** The `recall` description includes your live map and
+   the names of people on file, so the model can see what is there. The `remember` description
+   lists the kinds of things worth saving and tells the model not to wait to be asked.
+2. **The hooks catch what the model misses** (Claude Code, via `aif hooks install`):
+   - When your message mentions someone on file ("my sister"), the model is told who that is and
+     to look them up.
+   - When your message sounds like a lasting fact ("I'm allergic to…", "from now on…", "my
+     manager…"), the model is reminded to save it.
+   - When the model finishes, if you shared something and nothing was saved, it gets one reminder.
+     It never gets a second reminder about the same thing.
+3. **A new memory asks to be filled.** While the store is nearly empty, the capsule tells models to
+   learn the basics about you as conversations allow.
+
+For other agents, `aif setup` prints a short rules block for `AGENTS.md`, `.cursorrules` or
+custom instructions.
+
+## Trust
+
+- **Every fact records who said it.** A fact counts as *you said it* only when the model includes
+  your actual words. A model's guess stays a guess. One model repeating itself doesn't raise its
+  confidence. Several different models agreeing does, but never to the level of something you said.
+- **Nothing is overwritten.** The log is append-only. Changing or retracting a fact adds a new
+  entry, so the old value is still there. Each entry is content-hashed, and `aif verify` checks for
+  tampering.
+- **Contradictions are flagged.** If a model tries to record a second employer, it gets a
+  `CONFLICT` back and asks you which one is current.
+- **It knows time passes.** A sister who was 11 two years ago is now about 13. A school recorded two
+  years ago is marked as possibly out of date.
+
+## Everyday commands
+
+| command | |
 |---|---|
-| `init` | create a store (a git repo with `AIF.md`, `core.md`, `events/`) |
-| `remember T P V… [--subject --relation --alias --single/--multi --replace --pin --since --stale-after]` | state a fact |
-| `note T TEXT…` | freeform wiki entry |
-| `recall [Q…] [--topic --history]` | search |
-| `forget / confirm / pin / unpin ID` | amend by id |
-| `capsule [--budget N --stats]` | the injectable block |
-| `show [TOPIC]` · `map` · `people` · `beliefs [--all]` | human wiki of everything · topic inventory · who/what you've mentioned · models' hypotheses about you |
-| `review` | maintenance worksheet: renewals, unconfirmed inferences, conflicts, consolidation |
-| `status` · `verify` | health · integrity (content hashes + git history has no deletions) |
-| `export --format wiki\|capsule\|events` · `import FILE [--format lines\|aif]` | move in and out (e.g. another assistant's memory export) |
-| `sync` · `serve` · `setup` | multi-device · MCP server · client config |
+| `aif init` | create your memory |
+| `aif edit` / `aif edit persona` | edit who you are / how your AI should be |
+| `aif remember TOPIC KEY VALUE` | add a fact, e.g. `aif remember food diet vegetarian` |
+| `aif note TOPIC TEXT` | add a free-form note |
+| `aif recall QUERY` | search |
+| `aif show` | read everything as one page |
+| `aif people` | everyone you've mentioned |
+| `aif beliefs` | what models currently think about you |
+| `aif forget ID` / `aif confirm ID` / `aif pin ID` | fix things up |
+| `aif review` | a checklist of stale, unconfirmed or conflicting items |
+| `aif capsule` | print the summary models see |
+| `aif setup` | config for every supported client |
+| `aif hooks install` | add the Claude Code hooks |
+| `aif export` / `aif import` | move data out, or bring in another assistant's memory export |
+| `aif sync` | sync with a git remote |
 
-Set `AIF_HOME` to choose the store location, and `--clearance` / `AIF_CLEARANCE`
-(`public|personal|private|secret`) to control what's revealed.
+Run `aif --help` or `aif COMMAND --help` for every option.
 
-## Evidence
+## More than one device
+
+Your memory is a git repo at `~/.aif` (set `AIF_HOME` to move it). Push it to a **private**
+remote and run `aif sync` on each machine. Entries merge without conflicts.
+
+You can also run one shared server and point every device at it:
 
 ```bash
-python3 -m unittest discover -s tests -t .   # 56 tests
+AIF_TOKEN=$(openssl rand -hex 32) aif serve --http 0.0.0.0:8765
 ```
 
 ```bash
-python3 evals/run.py                         # deterministic, writes evals/RESULTS.md
+claude mcp add --transport http aif http://SERVER:8765/mcp --header "Authorization: Bearer $AIF_TOKEN"
+```
+
+Only expose it to the internet behind HTTPS.
+
+## Compatibility
+
+The MCP server supports protocol versions 2024-11-05 through 2026-07-28. That covers clients that
+open with `initialize` and newer stateless clients that call `server/discover`. It runs over stdio
+or Streamable HTTP.
+
+## Your data
+
+Everything lives in `~/.aif`:
+
+```
+~/.aif/
+  core.md       who you are, in your words
+  persona.md    how your AI should be with you
+  events/       every fact, note and change, one JSON line each
+  capsule.md    the summary models see (regenerated automatically)
+  AIF.md        instructions for any model that opens this folder
+```
+
+These are plain files you can read, grep, back up or delete. `AIF.md` explains the format to
+whatever model or program finds the folder, and [`SPEC.md`](SPEC.md) is short enough to
+re-implement in an afternoon. The point is that your memory outlives this tool.
+
+## Limits
+
+- The hook that spots facts worth saving is pattern-based and English-only. It errs toward
+  staying quiet.
+- `evals/when_to_call.py` measures how often models actually call `recall`. It needs API
+  credentials and hasn't been run against current models yet.
+- Search is keyword-based (BM25 plus the map's vocabulary), with no embeddings. That works well at
+  personal scale, but it won't match synonyms the store has never seen.
+
+## Development
+
+```bash
+python3 -m unittest discover -s tests -t .
 ```
 
 ```bash
-python3 evals/when_to_call.py                # live model eval, needs Anthropic credentials, costs money
+python3 evals/run.py
 ```
 
-[`evals/RESULTS.md`](evals/RESULTS.md) covers format cost, 10-year growth with a burst import,
-the hallucination feedback loop, 8/8 conflict scenarios, 11/11 people-over-time checks, and 9/9 descriptive-lookup and world-view checks.
+[`docs/DESIGN.md`](docs/DESIGN.md) explains the design choices. [`evals/RESULTS.md`](evals/RESULTS.md)
+covers token cost over ten simulated years, conflict handling, and people-over-time checks.
 
-## Docs
-
-- [`SPEC.md`](SPEC.md): the `aif/1` format (normative), for other implementations
-- [`docs/DESIGN.md`](docs/DESIGN.md): rationale, what changed from the original draft, prior art, and
-  honest limitations
-
-MIT licensed.
+MIT license.
