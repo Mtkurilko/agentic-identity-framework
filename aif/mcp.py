@@ -1,5 +1,9 @@
 """Minimal MCP server over stdio (JSON-RPC 2.0), standard library only.
 
+Dual-era: clients that open with `initialize` get the session-based protocol (2025-11-25 and
+earlier); clients that put the protocol version in each request's `_meta` (2026-07-28 and later)
+are served statelessly, and `server/discover` answers their probe.
+
 The server makes the model aware of the memory in three layers, from cheapest to most complete:
   1. `instructions` (injected by clients at session start) = the capsule: core, pinned facts,
      active facts, and the MAP of everything else on file.
@@ -17,7 +21,10 @@ from aif import __version__
 from aif.ops import Memory
 from aif.render import map_inline, roster
 
-SUPPORTED_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
+MODERN_VERSIONS = ("2026-07-28",)
+SUPPORTED_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")  # initialize-based
+META = "io.modelcontextprotocol/"
+LIST_TTL_MS = 5 * 60 * 1000  # the recall description carries a live map; let clients re-list every few minutes
 
 REMEMBER_DESC = (
     "Save a durable fact about the user to their portable, permanent memory. Save things likely to matter "
@@ -144,11 +151,19 @@ def tool_defs(memory: Memory) -> list[dict]:
     ]
 
 
+SERVER_INFO = {"name": "aif", "title": "AIF personal memory", "version": __version__}
+
+
 class Server:
     def __init__(self, memory: Memory, out=None):
         self.memory = memory
         self.out = out or sys.stdout
         self._topics = None
+        self._base_contributor = memory.contributor
+        self.modern = False
+
+    def _cacheable(self) -> dict:
+        return {"ttlMs": LIST_TTL_MS, "cacheScope": "private"} if self.modern else {}
 
     def send(self, msg: dict) -> None:
         self.out.write(json.dumps(msg, ensure_ascii=False) + "\n")
@@ -158,8 +173,22 @@ class Server:
         method, mid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
         if method is None or method.startswith("notifications/"):
             return None
+        meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+        version = meta.get(META + "protocolVersion")
+        self.modern = method == "server/discover" or (version is not None and method != "initialize")
+        if self.modern:
+            if version is not None and version not in MODERN_VERSIONS:
+                return {"jsonrpc": "2.0", "id": mid, "error": {
+                    "code": -32022, "message": "Unsupported protocol version",
+                    "data": {"supported": [*MODERN_VERSIONS, *SUPPORTED_VERSIONS], "requested": version}}}
+            client = (meta.get(META + "clientInfo") or {}).get("name")
+            self.memory.contributor = client if client and self._base_contributor == "unknown" \
+                else self._base_contributor
         try:
             result = self.dispatch(method, params)
+            if self.modern:
+                result = {"resultType": "complete", **result,
+                          "_meta": {**(result.get("_meta") or {}), META + "serverInfo": SERVER_INFO}}
         except KeyError as e:
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"Method not found: {e}"}}
         except Exception as e:  # never crash the client's session
@@ -169,6 +198,13 @@ class Server:
 
     def dispatch(self, method: str, params: dict) -> dict:
         m = self.memory
+        if method == "server/discover":
+            return {
+                "supportedVersions": [*MODERN_VERSIONS, *SUPPORTED_VERSIONS],
+                "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
+                "instructions": m.capsule(),
+                "ttlMs": LIST_TTL_MS, "cacheScope": "private",
+            }
         if method == "initialize":
             client = (params.get("clientInfo") or {}).get("name")
             if client and m.contributor == "unknown":
@@ -178,13 +214,13 @@ class Server:
             return {
                 "protocolVersion": requested if requested in SUPPORTED_VERSIONS else SUPPORTED_VERSIONS[0],
                 "capabilities": {"tools": {"listChanged": True}, "resources": {}, "prompts": {}},
-                "serverInfo": {"name": "aif", "title": "AIF personal memory", "version": __version__},
+                "serverInfo": SERVER_INFO,
                 "instructions": m.capsule(),
             }
         if method == "ping":
             return {}
         if method == "tools/list":
-            return {"tools": tool_defs(m)}
+            return {"tools": tool_defs(m), **self._cacheable()}
         if method == "tools/call":
             return self.call_tool(params.get("name"), params.get("arguments") or {})
         if method == "resources/list":
@@ -193,16 +229,16 @@ class Server:
                  "description": "Budgeted summary of the user's memory, for injection"},
                 {"uri": "aif://review", "name": "review", "mimeType": "text/markdown",
                  "description": "Maintenance worksheet: renewals, unconfirmed inferences, consolidation"},
-            ]}
+            ], **self._cacheable()}
         if method == "resources/read":
             uri = params.get("uri")
             text = {"aif://capsule": m.capsule, "aif://review": m.review}[uri]()
-            return {"contents": [{"uri": uri, "mimeType": "text/markdown", "text": text}]}
+            return {"contents": [{"uri": uri, "mimeType": "text/markdown", "text": text}], **self._cacheable()}
         if method == "prompts/list":
             return {"prompts": [
                 {"name": "about_me", "description": "Load my memory capsule into this conversation"},
                 {"name": "memory_review", "description": "Walk me through renewing and tidying my memory"},
-            ]}
+            ], **self._cacheable()}
         if method == "prompts/get":
             name = params.get("name")
             text = {"about_me": m.capsule, "memory_review": m.review}[name]()
@@ -235,7 +271,7 @@ class Server:
                 return {"content": [{"type": "text", "text": f"Unknown tool {name!r}"}], "isError": True}
         except (KeyError, ValueError) as e:
             return {"content": [{"type": "text", "text": f"ERROR: bad arguments: {e}"}], "isError": True}
-        if name != "recall":
+        if name != "recall" and not self.modern:
             topics = self._topic_set()
             if topics != self._topics:  # new topic or person: the recall description is stale
                 self._topics = topics

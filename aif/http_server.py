@@ -1,8 +1,10 @@
 """MCP Streamable HTTP transport, standard library only.
 
-One endpoint (`/mcp`) so several devices and models can share one store. Each client session gets its
-own `Server` (and `Memory`, so writes are credited to that client); the store's file lock keeps
-concurrent writers safe, and every session picks up the others' writes on its next read.
+One endpoint (`/mcp`) so several devices and models can share one store. Each legacy client session
+(opened with `initialize`) gets its own `Server` (and `Memory`, so writes are credited to that client).
+Stateless clients (2026-07-28: protocol version in each request's `_meta`) share one `Server` and are
+credited per request from their `clientInfo`. The store's file lock keeps concurrent writers safe, and
+every reader picks up the others' writes on its next read.
 
 Replies are plain JSON. When a call emits notifications (tools/list_changed after a new topic or
 person), the reply is a short SSE stream: the notifications, then the response.
@@ -44,6 +46,7 @@ class Sessions:
         self.store, self.clearance, self.contributor = store, clearance, contributor
         self._sessions: dict[str, tuple[Server, threading.Lock, float]] = {}
         self._lock = threading.Lock()
+        self.stateless = (Server(Memory(store, clearance=clearance, contributor=contributor)), threading.Lock())
 
     def open(self, sid: str | None) -> tuple[str, Server, threading.Lock]:
         """The session for `sid`, or a fresh one. Unknown ids (e.g. after a restart) get a fresh session
@@ -134,15 +137,21 @@ def make_handler(sessions: Sessions, token: str | None, path: str = "/mcp"):
             if not batch or not all(isinstance(x, dict) for x in batch):
                 return self._error(400, "Invalid request")
 
-            sid = self.headers.get("Mcp-Session-Id")
-            if any(x.get("method") == "initialize" for x in batch):
-                sid = None
-            sid, server, lock = sessions.open(sid)
+            modern = any(x.get("method") == "server/discover"
+                         or "io.modelcontextprotocol/protocolVersion" in ((x.get("params") or {}).get("_meta") or {})
+                         for x in batch if isinstance(x.get("params") or {}, dict))
+            if modern:
+                sid, (server, lock) = None, sessions.stateless
+            else:
+                sid = self.headers.get("Mcp-Session-Id")
+                if any(x.get("method") == "initialize" for x in batch):
+                    sid = None
+                sid, server, lock = sessions.open(sid)
             out = _Buffer()
             with lock:
                 server.out = out
                 replies = [r for r in (server.handle(x) for x in batch) if r is not None]
-            headers = {"Mcp-Session-Id": sid}
+            headers = {"Mcp-Session-Id": sid} if sid else {}
             if not replies:
                 return self._reply(202, headers=headers)
             payload = replies if isinstance(msg, list) else replies[0]

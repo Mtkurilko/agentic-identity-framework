@@ -649,5 +649,66 @@ class HttpTests(Base):
         self.assertEqual((status, headers["Mcp-Session-Id"]), (200, "gone"))
 
 
+class ModernMcpTests(Base):
+    """2026-07-28: no initialize; version and client identity ride in each request's _meta."""
+    META = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {"name": "new-client"}}
+
+    def rpc(self, server, method, params=None, meta=None):
+        params = {**(params or {}), "_meta": meta or self.META}
+        return server.handle({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+
+    def test_discover_and_stateless_calls(self):
+        self.said("food", "diet", "vegetarian")
+        out = io.StringIO()
+        server = Server(Memory(self.store, contributor="unknown", clock=self.clock), out=out)
+        found = self.rpc(server, "server/discover")["result"]
+        self.assertIn("2026-07-28", found["supportedVersions"])
+        self.assertIn("2025-11-25", found["supportedVersions"])
+        self.assertIn("diet=vegetarian", found["instructions"])
+        self.assertEqual((found["resultType"], found["cacheScope"]), ("complete", "private"))
+        self.assertEqual(found["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "aif")
+
+        tools = self.rpc(server, "tools/list")["result"]
+        self.assertIn("ttlMs", tools)
+        res = self.rpc(server, "tools/call", {"name": "remember", "arguments": {
+            "topic": "travel", "predicate": "seat_pref", "value": "aisle", "source": "user_stated",
+            "evidence": "aisle please"}})["result"]
+        self.assertEqual(res["resultType"], "complete")
+        self.assertNotIn("list_changed", out.getvalue())  # modern clients re-list on ttl instead
+        self.assertEqual(self.mem.graph.facts[fact_key("me", "seat_pref", "aisle")].contributors, ["new-client"])
+
+    def test_unsupported_version_lists_supported(self):
+        server = Server(self.mem, out=io.StringIO())
+        err = self.rpc(server, "tools/list", meta={"io.modelcontextprotocol/protocolVersion": "1900-01-01"})["error"]
+        self.assertEqual(err["code"], -32022)
+        self.assertIn("2026-07-28", err["data"]["supported"])
+
+    def test_legacy_initialize_still_works_after_modern_probe(self):
+        server = Server(self.mem, out=io.StringIO())
+        self.rpc(server, "server/discover")
+        init = server.handle({"jsonrpc": "2.0", "id": 2, "method": "initialize",
+                              "params": {"protocolVersion": "2025-11-25"}})["result"]
+        self.assertEqual(init["protocolVersion"], "2025-11-25")
+        self.assertNotIn("resultType", init)
+
+
+class ModernHttpTests(HttpTests):
+    def test_stateless_requests_need_no_session(self):
+        meta = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientInfo": {"name": "web"}}
+        status, headers, body = self.post({"jsonrpc": "2.0", "id": 1, "method": "server/discover",
+                                           "params": {"_meta": meta}})
+        self.assertEqual(status, 200)
+        self.assertIsNone(headers.get("Mcp-Session-Id"))
+        self.assertIn("2026-07-28", json.loads(body)["result"]["supportedVersions"])
+        call = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"_meta": meta, "name": "remember",
+                "arguments": {"topic": "food", "predicate": "diet", "value": "vegan", "source": "user_stated",
+                              "evidence": "I'm vegan"}}}
+        status, headers, body = self.post(call)
+        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertFalse(json.loads(body)["result"]["isError"])
+
+
 if __name__ == "__main__":
     unittest.main()
