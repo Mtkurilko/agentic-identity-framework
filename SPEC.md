@@ -13,12 +13,13 @@ A store is a directory, and SHOULD be a git repository.
 |---|---|---|
 | `events/YYYY-MM.jsonl` | **ground truth**, append-only | tools only |
 | `core.md` | owner's self-description, free text (HTML comments are ignored) | the owner |
+| `persona.md` | how the owner wants their AI to behave, free text (HTML comments are ignored); optional | the owner |
 | `capsule.md` | derived rendering (§6), committed for tool-less access | tools only |
 | `aif.json` | settings: `format`, `owner`, `budget`, `core_budget` | owner/tools |
 | `AIF.md` | human/model-readable description of this format and its rules | `init` |
 | `.gitattributes` | MUST contain `events/*.jsonl merge=union` | `init` |
 
-Everything except `events/` and `core.md` can be regenerated. An implementation MUST NOT require any
+Everything except `events/`, `core.md` and `persona.md` can be regenerated. An implementation MUST NOT require any
 other file to exist.
 
 ## 2. Events
@@ -204,7 +205,8 @@ The capsule is what gets injected. A conforming renderer SHOULD:
 
 - start with a short self-describing header: what the text is, that `?` = tentative, and that the map
   lists more than is loaded;
-- include `core.md`, then pinned facts, then a one-line roster of **People & things**, then a few
+- include `core.md`, then a **Persona** section made of `persona.md` plus every current fact about
+  `me` in the topic `persona` (these are excluded from Active), then pinned facts, then a one-line roster of **People & things**, then a few
   **Understanding** beliefs, then **Active** facts selected **best-first by score under a
   hard token budget** (never a score threshold), then a **Map** of all topics with counts and top
   predicates, then at most one faded fact to re-verify;

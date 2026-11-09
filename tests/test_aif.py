@@ -693,6 +693,31 @@ class ModernMcpTests(Base):
         self.assertNotIn("resultType", init)
 
 
+class PersonaTests(Base):
+    def test_persona_file_and_facts_render_together(self):
+        self.store.persona_path.write_text("<!-- hint -->\nBe blunt. Push back on weak ideas.\n")
+        self.said("persona", "tone", "dry humour")
+        cap = self.mem.capsule()
+        persona = cap.split("## Persona")[1].split("##")[0]
+        self.assertIn("Be blunt", persona)
+        self.assertIn("tone=dry humour", persona)
+        self.assertNotIn("hint", cap)
+        self.assertNotIn("tone=", cap.split("## Active")[-1] if "## Active" in cap else "")
+
+    def test_new_store_asks_to_get_to_know_the_user_until_it_does(self):
+        self.assertIn("## New memory", self.mem.capsule())
+        for p, o in (("diet", "vegan"), ("lives_in", "Boston"), ("employer", "Acme")):
+            self.said("about", p, o)
+        self.assertNotIn("## New memory", self.mem.capsule())
+
+    def test_interview_prompt(self):
+        server = Server(self.mem, out=io.StringIO())
+        names = [p["name"] for p in server.handle({"jsonrpc": "2.0", "id": 1, "method": "prompts/list"})["result"]["prompts"]]
+        self.assertIn("get_to_know_me", names)
+        msg = server.handle({"jsonrpc": "2.0", "id": 2, "method": "prompts/get", "params": {"name": "get_to_know_me"}})
+        self.assertIn("persona", msg["result"]["messages"][0]["content"]["text"])
+
+
 class ModernHttpTests(HttpTests):
     def test_stateless_requests_need_no_session(self):
         meta = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",

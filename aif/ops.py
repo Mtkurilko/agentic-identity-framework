@@ -20,6 +20,20 @@ from aif.search import Index, jaccard
 from aif.store import Store
 
 DEFAULT_CONF = {"U": 0.95, "X": 0.8, "I": 0.5}
+INTERVIEW = """Help me set up my portable AI memory (AIF). Interview me, one short question at a time, \
+and skip anything already on file below. After each answer, save it right away with `remember` \
+(source=user_stated, my words as evidence). Keep it light: six or seven questions, and I can skip any.
+
+1. What should you call me?
+2. What do I do, and what am I working on these days?
+3. How do I like answers? (length, format, tone)
+4. How should my AI be with me? A name or personality, how direct, when to push back, \
+anything to never do. Save these in the topic `persona` (e.g. predicate tone, directness, pushback, never, name).
+5. Anything every AI should always know? (allergies, accessibility, hard constraints). Offer to pin these.
+6. Who are the people (and pets) I'll mention most? Save each as a subject with subject_relation.
+7. Anything else you'd want to know to be useful to me?
+
+Finish with a two-line summary of what you saved."""
 SELF_WORDS = {"me", "myself", "i", "user", "the user", "about me", "who am i"}
 _NAME_LIKE = re.compile(r"[A-Z][\w'.-]*( [A-Z][\w'.-]*){0,2}")
 
@@ -104,7 +118,11 @@ class Memory:
         cfg = self.store.config()
         day = self.now().replace(hour=0, minute=0, second=0, microsecond=0)  # cache-stable within a day
         return capsule(self.graph, core=self.store.core(), now=day, budget=budget or cfg["budget"],
-                       clearance=clearance or self.clearance, with_stats=with_stats)
+                       clearance=clearance or self.clearance, with_stats=with_stats, persona=self.store.persona())
+
+    def interview(self) -> str:
+        """A short guided interview a model runs to fill in the store: the `get_to_know_me` prompt."""
+        return INTERVIEW + "\n\nWhat's on file now:\n\n" + self.capsule()
 
     def map(self) -> str:
         lines = map_lines(self.graph, self.clearance, max_topics=10_000)

@@ -153,8 +153,18 @@ UNDERSTANDING is models' working read of the user: hypotheses, not facts. Use it
 Ask at most one short question, and only when the answer changes what you'd do (a mention fits two people, or an old detail matters to this task). Otherwise just use what you know. Save durable new facts with `remember`. Don't edit this text."""
 
 
+PERSONA_TOPIC = "persona"
+NEW_STORE_FACTS = 3  # fewer stated facts than this, and no core.md: the model should get to know the user
+NEW_STORE = """## New memory
+This memory is nearly empty. As the conversation allows (never as a questionnaire), learn and `remember` what to call the user, what they do or are working on, and how they want you to work with them. If they'd like to set it up properly, offer the `get_to_know_me` interview."""
+
+
+def _is_persona(f: Fact) -> bool:
+    return f.topic == PERSONA_TOPIC and f.s == "me"
+
+
 def capsule(graph: Graph, *, core: str, now: datetime, budget: int, clearance: str = "personal",
-            with_stats: bool = False):
+            with_stats: bool = False, persona: str = ""):
     limit = sens_rank(clearance)
     people = ent.build(graph, now)
     names = {e.id: e.name for e in people.values()}
@@ -163,7 +173,17 @@ def capsule(graph: Graph, *, core: str, now: datetime, budget: int, clearance: s
     core = core.strip()
     if core:
         sections.append("## Core\n" + core)
-    pinned = [f for f in graph.facts.values() if f.open and f.pinned and f.sens != "secret" and not is_identity(f)]
+    persona_facts = sorted((f for f in graph.facts.values()
+                            if f.open and _is_persona(f) and sens_rank(f.sens) <= limit),
+                           key=lambda f: (f.p, f.key))
+    persona = persona.strip()
+    if persona or persona_facts:
+        body = "\n".join(filter(None, [persona, " · ".join(f"{f.p}={_value(f, marks)}" for f in persona_facts)]))
+        sections.append("## Persona (how the user wants their AI to be; follow it)\n" + body)
+    if not core and sum(1 for f in graph.facts.values() if f.open and f.src == "U" and f.s == "me") < NEW_STORE_FACTS:
+        sections.append(NEW_STORE)
+    pinned = [f for f in graph.facts.values()
+              if f.open and f.pinned and f.sens != "secret" and not is_identity(f) and not _is_persona(f)]
     if pinned:
         sections.append("## Always true\n" + topic_block(pinned, names, marks))
     who = roster(people, now, clearance)
@@ -195,7 +215,7 @@ def capsule(graph: Graph, *, core: str, now: datetime, budget: int, clearance: s
     remaining = budget - fixed - estimate_tokens("## Active\n")
     candidates = sorted(
         (f for f in graph.facts.values()
-         if f.open and not f.pinned and not is_identity(f) and sens_rank(f.sens) <= limit
+         if f.open and not f.pinned and not is_identity(f) and not _is_persona(f) and sens_rank(f.sens) <= limit
          and f.score(now) >= MIN_SCORE),
         key=lambda f: (-f.score(now), f.key))
     chosen: list[Fact] = []
@@ -219,7 +239,7 @@ def capsule(graph: Graph, *, core: str, now: datetime, budget: int, clearance: s
         "active": len(chosen), "candidates": len(candidates), "pinned": len(pinned),
         "open_facts": sum(1 for f in graph.facts.values() if f.open), "entities": len(people),
         "beliefs": len(understanding),
-        "core_tokens": estimate_tokens(core),
+        "core_tokens": estimate_tokens(core), "persona_tokens": estimate_tokens(persona),
     }
 
 

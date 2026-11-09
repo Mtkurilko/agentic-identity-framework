@@ -9,7 +9,7 @@ from pathlib import Path
 
 from aif import FORMAT
 from aif.events import seal
-from aif.templates import AIF_MD, CORE_MD, GITATTRIBUTES, GITIGNORE
+from aif.templates import AIF_MD, CORE_MD, GITATTRIBUTES, GITIGNORE, PERSONA_MD
 
 try:
     import fcntl
@@ -36,6 +36,10 @@ class Store:
         return self.home / "core.md"
 
     @property
+    def persona_path(self) -> Path:
+        return self.home / "persona.md"
+
+    @property
     def capsule_path(self) -> Path:
         return self.home / "capsule.md"
 
@@ -51,6 +55,7 @@ class Store:
         created = []
         self.events_dir.mkdir(parents=True, exist_ok=True)
         for path, text in ((self.events_dir / ".gitkeep", ""), (self.home / "AIF.md", AIF_MD), (self.core_path, CORE_MD),
+                           (self.persona_path, PERSONA_MD),
                            (self.home / ".gitattributes", GITATTRIBUTES), (self.home / ".gitignore", GITIGNORE)):
             if not path.exists():
                 path.write_text(text, encoding="utf-8")
@@ -73,9 +78,16 @@ class Store:
         return config
 
     def core(self) -> str:
-        if not self.core_path.exists():
+        return self._hand_written(self.core_path)
+
+    def persona(self) -> str:
+        return self._hand_written(self.persona_path)
+
+    @staticmethod
+    def _hand_written(path: Path) -> str:
+        if not path.exists():
             return ""
-        text = self.core_path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
         # HTML comments are authoring hints, not content.
         while "<!--" in text and "-->" in text:
             start = text.index("<!--")

@@ -9,6 +9,9 @@ as much as for humans: if you are a model reading this, these are your instructi
 ## Files
 - `core.md`: who the owner is, in their own words. Hand-written. Read it; never edit it
   unless the owner asks.
+- `persona.md`: how the owner wants their AI to behave with them (tone, directness, what to
+  push back on, what never to do). Hand-written, same rules as core.md. Facts in the topic
+  `persona` add to it and are always shown with it.
 - `events/YYYY-MM.jsonl`: THE ground truth. One JSON event per line, append-only.
 - `capsule.md`: a compact, budgeted summary rendered from the events. Paste it into
   any model. Regenerated on every write; never edit it by hand.
@@ -59,8 +62,17 @@ optional on assert: stale_after (days until a time-sensitive detail should be re
 - v1, entities (2026-09): additive conventions, no new ops. Reserved predicates `name`, `kind`,
   `relation_to_me`, `alias` on non-`me` subjects; optional `stale_after` on assert and `about`
   on note. A reader that doesn't know these still stores and replays them correctly.
+- v1, persona (2026-11): additive, no new ops. Optional `persona.md`; facts in topic
+  `persona` describe how the owner wants their AI to behave and render with it.
 - v1, world-view (2026-09): new ops `belief` and `evidence`. Readers that predate them ignore
   them (unknown ops are skipped), so older tools still read every fact correctly.
+"""
+
+PERSONA_MD = """\
+<!-- Your AI, your way. How every assistant should act with you, whichever company made it.
+     Injected into every session next to core.md, so keep the two together under ~300 tokens.
+     Ideas: a name or voice for your assistant, tone, how direct to be, how much detail,
+     when to push back, what to never do. Models can add to this with the `persona` topic. -->
 """
 
 CORE_MD = """\

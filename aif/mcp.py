@@ -238,10 +238,11 @@ class Server:
             return {"prompts": [
                 {"name": "about_me", "description": "Load my memory capsule into this conversation"},
                 {"name": "memory_review", "description": "Walk me through renewing and tidying my memory"},
+                {"name": "get_to_know_me", "description": "Short interview to fill in my memory and my AI's persona"},
             ], **self._cacheable()}
         if method == "prompts/get":
             name = params.get("name")
-            text = {"about_me": m.capsule, "memory_review": m.review}[name]()
+            text = {"about_me": m.capsule, "memory_review": m.review, "get_to_know_me": m.interview}[name]()
             return {"messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
         raise KeyError(method)
 

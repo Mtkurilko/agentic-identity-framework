@@ -23,15 +23,46 @@ def _memory(args, clearance=None) -> Memory:
     return Memory(store, clearance=clearance or args.clearance or "personal", contributor="user-cli")
 
 
+def _ask(question: str) -> str:
+    try:
+        return input(question + "\n> ").strip()
+    except EOFError:
+        return ""
+
+
+def _onboard(store: Store) -> str | None:
+    """Four questions on first run. Everything is optional and lands in plain files you can edit later."""
+    print("A few quick questions (press Enter to skip any). You can change all of it later.\n")
+    name = _ask("What should AI call you?")
+    about = _ask("In a sentence or two: what do you do, and what are you working on?")
+    style = _ask("How do you like answers? (e.g. short and direct, code first, explain like a teacher)")
+    persona = _ask("How should your AI be with you? (tone, how blunt, when to push back, anything to never do)")
+    always = _ask("Anything every AI should always know? (allergies, accessibility, hard rules)")
+    core = [line for line in (f"Call me {name}." if name else "", about,
+                              f"How I like answers: {style}" if style else "",
+                              f"Always keep in mind: {always}" if always else "") if line]
+    if core:
+        store.core_path.write_text(store.core_path.read_text(encoding="utf-8").rstrip() + "\n\n"
+                                   + "\n".join(core) + "\n", encoding="utf-8")
+    if persona:
+        store.persona_path.write_text(store.persona_path.read_text(encoding="utf-8").rstrip() + "\n\n"
+                                      + persona + "\n", encoding="utf-8")
+    return name or None
+
+
 def cmd_init(args):
     store = Store(args.home)
+    fresh = not store.exists()
     created = store.init(owner=args.owner)
+    if fresh and not args.quick and sys.stdin.isatty():
+        name = _onboard(store)
+        if name and not args.owner:
+            store.init(owner=name)
     mem = Memory(store, contributor="user-cli")
     store.write_capsule(mem.capsule())
     store.commit("aif: initialise store", all_files=True)
-    print(f"AIF store ready at {store.home}" + (f" (created {', '.join(created)})" if created else ""))
-    print(f"Next: edit {store.core_path} (who you are, in your own words), then `aif remember ...`,")
-    print("and connect your AI tools with `aif setup`.")
+    print(f"\nAIF store ready at {store.home}" + (f" (created {', '.join(created)})" if created else ""))
+    print("Next: connect your AI tools with `aif setup`. Edit yourself any time with `aif edit` / `aif edit persona`.")
 
 
 def cmd_capsule(args):
@@ -164,6 +195,21 @@ def cmd_import(args):
           f"(`aif review`, or 'go through my {args.topic} memories and remember the durable ones').")
 
 
+def cmd_edit(args):
+    store = Store(args.home)
+    if not store.exists():
+        sys.exit(f"No AIF store at {store.home}. Run `aif init` first.")
+    store.init()  # creates persona.md in stores made before it existed
+    path = store.persona_path if args.which == "persona" else store.core_path
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or ("notepad" if os.name == "nt" else "nano")
+    os.system(f"{editor} {shlex.quote(str(path))}")
+    mem = Memory(store, contributor="user-cli")
+    if store.write_capsule(mem.capsule(clearance="personal")):
+        store.commit(f"aif: edit {path.name}", all_files=True)
+    print(f"saved {path}")
+
+
+
 def cmd_sync(args):
     mem = _memory(args)
     store = mem.store
@@ -236,8 +282,9 @@ def main(argv=None) -> int:
     p.add_argument("--version", action="version", version=f"aif {__version__} ({FORMAT})")
     sub = p.add_subparsers(dest="cmd")
 
-    s = sub.add_parser("init", help="create a store")
+    s = sub.add_parser("init", help="create a store (asks a few questions the first time)")
     s.add_argument("--owner", help="your name")
+    s.add_argument("--quick", action="store_true", help="skip the questions")
     s.set_defaults(fn=cmd_init)
 
     s = sub.add_parser("capsule", help="print the budgeted context block (paste into any model)")
@@ -317,6 +364,10 @@ def main(argv=None) -> int:
     s.add_argument("--topic", default="imported")
     s.add_argument("--origin", default="import", help="where it came from, e.g. chatgpt-memory")
     s.set_defaults(fn=cmd_import)
+
+    s = sub.add_parser("edit", help="edit core.md (who you are) or persona.md (how your AI should be)")
+    s.add_argument("which", nargs="?", choices=("core", "persona"), default="core")
+    s.set_defaults(fn=cmd_edit)
 
     sub.add_parser("sync", help="git pull (union merge) + re-render + push").set_defaults(fn=cmd_sync)
     s = sub.add_parser("serve", help="run the MCP server (stdio, or HTTP for many devices)")
