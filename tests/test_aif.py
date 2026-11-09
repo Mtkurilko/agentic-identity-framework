@@ -580,5 +580,74 @@ class McpTests(Base):
         self.assertEqual([r["id"] for r in replies], [1, 2])
 
 
+
+class HttpTests(Base):
+    def setUp(self):
+        super().setUp()
+        import threading
+        from http.server import ThreadingHTTPServer
+
+        from aif.http_server import Sessions, make_handler
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(Sessions(self.store, "personal", "t"), "s3cret"))
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}/mcp"
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        super().tearDown()
+
+    def post(self, msg, token="s3cret", sid=None):
+        import urllib.error
+        import urllib.request
+
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if sid:
+            headers["Mcp-Session-Id"] = sid
+        req = urllib.request.Request(self.url, json.dumps(msg).encode(), headers)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.headers, r.read().decode()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, e.read().decode()
+
+    def test_rejects_missing_or_wrong_token(self):
+        msg = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+        self.assertEqual(self.post(msg, token=None)[0], 401)
+        self.assertEqual(self.post(msg, token="nope")[0], 401)
+
+    def test_session_roundtrip_and_shared_writes(self):
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "clientInfo": {"name": "laptop"}}}
+        status, headers, body = self.post(init)
+        self.assertEqual(status, 200)
+        sid = headers["Mcp-Session-Id"]
+        self.assertIn("instructions", json.loads(body)["result"])
+        self.assertEqual(self.post({"jsonrpc": "2.0", "method": "notifications/initialized"}, sid=sid)[0], 202)
+
+        call = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "remember", "arguments": {
+            "topic": "food", "predicate": "diet", "value": "vegetarian", "source": "user_stated",
+            "evidence": "I'm vegetarian"}}}
+        status, headers, body = self.post(call, sid=sid)
+        self.assertEqual(headers["Content-Type"], "text/event-stream")  # new topic: list_changed rides along
+        events = [json.loads(line[6:]) for line in body.splitlines() if line.startswith("data: ")]
+        self.assertEqual(events[0]["method"], "notifications/tools/list_changed")
+        self.assertFalse(events[-1]["result"]["isError"])
+
+        # A second device sees the write and is credited separately.
+        other = self.post({**init, "params": {**init["params"], "clientInfo": {"name": "phone"}}})[1]["Mcp-Session-Id"]
+        self.assertNotEqual(other, sid)
+        recall = {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                  "params": {"name": "recall", "arguments": {"query": "diet"}}}
+        self.assertIn("vegetarian", json.loads(self.post(recall, sid=other)[2])["result"]["content"][0]["text"])
+
+    def test_unknown_session_is_recreated(self):
+        status, headers, _ = self.post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, sid="gone")
+        self.assertEqual((status, headers["Mcp-Session-Id"]), (200, "gone"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -186,7 +186,20 @@ def cmd_serve(args):
     if not store.exists():
         store.init()
     clearance = args.clearance or os.environ.get("AIF_CLEARANCE", "personal")
-    Server(Memory(store, clearance=clearance, contributor=os.environ.get("AIF_CONTRIBUTOR", "unknown"))).serve()
+    contributor = os.environ.get("AIF_CONTRIBUTOR", "unknown")
+    if args.http:
+        from aif.http_server import serve_http
+
+        host, _, port = args.http.rpartition(":")
+        token = os.environ.get("AIF_TOKEN")
+        if args.token_file:
+            token = Path(args.token_file).expanduser().read_text(encoding="utf-8").strip()
+        if not token and not args.no_auth:
+            sys.exit("aif serve --http needs a token: set AIF_TOKEN or --token-file (or pass --no-auth)")
+        serve_http(store, host or "127.0.0.1", int(port), token=token or None, clearance=clearance,
+                   contributor=contributor)
+        return
+    Server(Memory(store, clearance=clearance, contributor=contributor)).serve()
 
 
 def cmd_setup(args):
@@ -306,7 +319,11 @@ def main(argv=None) -> int:
     s.set_defaults(fn=cmd_import)
 
     sub.add_parser("sync", help="git pull (union merge) + re-render + push").set_defaults(fn=cmd_sync)
-    sub.add_parser("serve", help="run the MCP server on stdio").set_defaults(fn=cmd_serve)
+    s = sub.add_parser("serve", help="run the MCP server (stdio, or HTTP for many devices)")
+    s.add_argument("--http", metavar="[HOST:]PORT", help="serve MCP over HTTP at http://HOST:PORT/mcp instead of stdio")
+    s.add_argument("--token-file", help="file holding the bearer token clients must send (default $AIF_TOKEN)")
+    s.add_argument("--no-auth", action="store_true", help="allow --http without a token (trusted networks only)")
+    s.set_defaults(fn=cmd_serve)
     sub.add_parser("setup", help="print config for Claude Code, Claude Desktop, Cursor, Codex…").set_defaults(fn=cmd_setup)
 
     args = p.parse_args(argv)
