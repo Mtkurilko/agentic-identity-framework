@@ -693,6 +693,61 @@ class ModernMcpTests(Base):
         self.assertNotIn("resultType", init)
 
 
+class HookTests(Base):
+    def hook(self, event, payload):
+        from aif.hooks import HANDLERS
+        out = HANDLERS[event](self.mem, payload)
+        return json.loads(out)["hookSpecificOutput"]["additionalContext"] if out else ""
+
+    def test_disclosure_detection(self):
+        from aif.hooks import disclosures
+        self.assertEqual(disclosures("fix this bug in `my_name` please"), [])
+        self.assertEqual(disclosures("```\nI am a robot\n```\nrefactor this"), [])
+        self.assertEqual(disclosures("Can you summarise this article?"), [])
+        self.assertEqual(disclosures("Thanks! I'm vegetarian, so skip the chicken. What else?"),
+                         ["I'm vegetarian, so skip the chicken."])
+        self.assertTrue(disclosures("my sister Anna turns 12 next week"))
+        self.assertTrue(disclosures("From now on, give me code first."))
+
+    def test_prompt_surfaces_people_on_file(self):
+        self.said("family", "sister", "Rebecca")
+        ctx = self.hook("prompt", {"session_id": "s1", "prompt": "gift ideas for my sister?"})
+        self.assertIn("Rebecca", ctx)
+        self.assertIn("recall", ctx)
+        self.assertEqual(self.hook("prompt", {"session_id": "s1", "prompt": "what is a monad"}), "")
+
+    def test_stop_nudges_once_for_unsaved_disclosures(self):
+        self.hook("prompt", {"session_id": "s1", "prompt": "I hate red-eye flights. Find me a flight to Lisbon."})
+        self.clock.advance(0.001)
+        ctx = self.hook("stop", {"session_id": "s1"})
+        self.assertIn("red-eye", ctx)
+        self.assertEqual(self.hook("stop", {"session_id": "s1"}), "")  # never twice for the same thing
+
+    def test_stop_is_quiet_after_a_save_or_when_continuing(self):
+        self.hook("prompt", {"session_id": "s2", "prompt": "I prefer aisle seats."})
+        self.assertEqual(self.hook("stop", {"session_id": "s2", "stop_hook_active": True}), "")
+        self.clock.advance(1)
+        self.said("travel", "seat_pref", "aisle")
+        self.assertEqual(self.hook("stop", {"session_id": "s2"}), "")
+
+    def test_run_never_raises(self):
+        from aif.hooks import run
+        self.assertEqual(run("stop", self.store, stdin=io.StringIO("not json")), "")
+
+    def test_install_is_idempotent_and_keeps_other_hooks(self):
+        from aif.hooks import install, uninstall_from
+        settings = self.dir / "settings.json"
+        mine = {"type": "command", "command": "say done"}
+        settings.write_text(json.dumps({"model": "x", "hooks": {"Stop": [{"hooks": [mine]}]}}))
+        install(settings, "python3 -m aif hook", ("prompt", "stop"))
+        install(settings, "python3 -m aif hook", ("prompt", "stop"))
+        data = json.loads(settings.read_text())
+        self.assertEqual(data["model"], "x")
+        self.assertEqual(len(data["hooks"]["UserPromptSubmit"]), 1)
+        self.assertEqual(len(data["hooks"]["Stop"]), 2)
+        self.assertEqual(uninstall_from(data), {"Stop": [{"hooks": [mine]}]})
+
+
 class PersonaTests(Base):
     def test_persona_file_and_facts_render_together(self):
         self.store.persona_path.write_text("<!-- hint -->\nBe blunt. Push back on weak ideas.\n")

@@ -209,6 +209,34 @@ def cmd_edit(args):
     print(f"saved {path}")
 
 
+def cmd_hook(args):
+    from aif.hooks import run
+    out = run(args.event, Store(args.home), clearance=args.clearance or "personal")
+    if out:
+        print(out)
+
+
+def _hook_command(home: str) -> str:
+    return f"AIF_HOME={shlex.quote(home)} {shlex.quote(sys.executable)} -m aif hook"
+
+
+def cmd_hooks(args):
+    from aif.hooks import install, uninstall_from
+    settings = Path(args.settings).expanduser()
+    if args.action == "uninstall":
+        if settings.exists():
+            data = json.loads(settings.read_text(encoding="utf-8"))
+            data["hooks"] = uninstall_from(data)
+            if not data["hooks"]:
+                del data["hooks"]
+            settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        print(f"removed AIF hooks from {settings}")
+        return
+    events = ("prompt", "stop") + (("session",) if args.capsule else ())
+    done = install(settings, _hook_command(str(Store(args.home).home)), events)
+    print(f"installed AIF hooks ({', '.join(done)}) in {settings}")
+    print("They surface people on file when you mention them, and catch facts you shared that never got saved.")
+
 
 def cmd_sync(args):
     mem = _memory(args)
@@ -248,6 +276,13 @@ def cmd_serve(args):
     Server(Memory(store, clearance=clearance, contributor=contributor)).serve()
 
 
+RULES = """Personal memory: I keep a portable memory (AIF) connected as the `aif` MCP server.
+- Before assuming anything about me, my preferences, or people I mention, check the capsule and call `recall`.
+- When I share something durable (a preference, constraint, person, project, or how I want you to work), \
+save it with `remember` in the same turn. Don't wait to be asked.
+- Follow the Persona section of my memory for how to work with me."""
+
+
 def cmd_setup(args):
     cmd = [sys.executable, "-m", "aif", "serve"]
     home = str(Store(args.home).home)
@@ -257,8 +292,7 @@ def cmd_setup(args):
 
 ## Claude Code
 claude mcp add aif --scope user -e AIF_HOME={shlex.quote(home)} -- {as_shell}
-# optional, capsule at every session start even without MCP (~/.claude/settings.json):
-{json.dumps({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": f"AIF_HOME={shlex.quote(home)} {sys.executable} -m aif capsule"}]}]}}, indent=2)}
+aif hooks install        # recommended: nudges to recall people you mention and to save what you share
 
 ## Claude Desktop / Cursor / Windsurf / any MCP client (mcpServers JSON)
 {json.dumps({"mcpServers": {"aif": {"command": cmd[0], "args": cmd[1:], "env": env}}}, indent=2)}
@@ -271,6 +305,9 @@ env = {{ AIF_HOME = "{home}" }}
 
 ## Any chat box with no tools
 aif capsule | pbcopy     # then paste as your first message or custom instructions
+
+## Optional: add to CLAUDE.md / AGENTS.md / .cursorrules / custom instructions
+{RULES}
 """)
 
 
@@ -368,6 +405,15 @@ def main(argv=None) -> int:
     s = sub.add_parser("edit", help="edit core.md (who you are) or persona.md (how your AI should be)")
     s.add_argument("which", nargs="?", choices=("core", "persona"), default="core")
     s.set_defaults(fn=cmd_edit)
+
+    s = sub.add_parser("hook", help="run an agent hook (reads the event JSON on stdin)")
+    s.add_argument("event", choices=("prompt", "stop", "session"))
+    s.set_defaults(fn=cmd_hook)
+    s = sub.add_parser("hooks", help="install/uninstall AIF hooks in Claude Code settings")
+    s.add_argument("action", choices=("install", "uninstall"))
+    s.add_argument("--settings", default="~/.claude/settings.json", help="settings file (default user settings)")
+    s.add_argument("--capsule", action="store_true", help="also inject the capsule at session start (no-MCP setups)")
+    s.set_defaults(fn=cmd_hooks)
 
     sub.add_parser("sync", help="git pull (union merge) + re-render + push").set_defaults(fn=cmd_sync)
     s = sub.add_parser("serve", help="run the MCP server (stdio, or HTTP for many devices)")

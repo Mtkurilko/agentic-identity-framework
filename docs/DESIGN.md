@@ -35,12 +35,21 @@ places, so it reaches models in every setting:
 | capsule `## Map` (via MCP `instructions`, SessionStart hook, or paste) | every model, tools or not | yes |
 | `recall` tool **description** is regenerated with a one-line map; `tools/list_changed` fires when a new topic appears | MCP clients | yes, since tool descriptions persist all session |
 | `recall` result "Nothing on file. Ask the user rather than guessing" | MCP clients | on miss |
+| `aif hooks` (UserPromptSubmit): names a person on file when the message mentions them | Claude Code | per message |
+| `aif hooks` (UserPromptSubmit + Stop): flags self-disclosures, and asks once at turn end if nothing was saved since | Claude Code | per turn |
 
 The map also solves search. Because the model sees the store's own predicate vocabulary
 (`seat_pref`, not "where I like to sit"), plain BM25 retrieves well. Embeddings become optional, not a
 dependency. Semantic de-duplication, which the draft assigned to embeddings, is handed to the
 calling model: `remember` returns `POSSIBLE DUPLICATE` with the candidate, and the model, which
 understands language, decides.
+
+Saving has the opposite problem: a model rarely *forgets* to answer, but it often forgets to write
+down what it just learned. Descriptions alone don't fix that, so the hooks add a deterministic check.
+The prompt hook records sentences that look like durable self-disclosure, along with the last event
+id in the store at that moment. The stop hook compares: if nothing has been written since, it asks the
+model once to save (or to do nothing). Pattern matching is crude, so it is tuned to miss rather than
+nag. A false positive costs one look, and the same sentence never triggers twice.
 
 `evals/when_to_call.py` measures this directly: recall-call rate on questions whose answer is on
 file but not loaded, against a baseline memory tool with a generic description. **It has not been run
