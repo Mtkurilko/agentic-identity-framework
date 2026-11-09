@@ -27,9 +27,12 @@ META = "io.modelcontextprotocol/"
 LIST_TTL_MS = 5 * 60 * 1000  # the recall description carries a live map; let clients re-list every few minutes
 
 REMEMBER_DESC = (
-    "Save a durable fact about the user to their portable, permanent memory. Save things likely to matter "
-    "again (preferences, constraints, biography, people, ongoing projects, how they like to work), not "
-    "chit-chat or one-off task details. source=user_stated ONLY when the user said it: put their words in "
+    "Save a durable fact about the user to their portable, permanent memory, which every AI they use reads. "
+    "Call it in the same turn, without being asked, whenever the user reveals something likely to matter in a "
+    "future conversation: a preference or dislike, a constraint (allergy, budget, schedule), biography, a person "
+    "or pet in their life, an ongoing project or goal, a decision, or how they want you to work. Also call it "
+    "when they say 'remember', 'from now on', 'always' or 'never'. Skip chit-chat and one-off task details. "
+    "One call per fact; a quick save beats a forgotten one, and duplicates are caught for you. source=user_stated ONLY when the user said it: put their words in "
     "`evidence`. Your own guesses are source=inferred and stay tentative until the user confirms. Reuse "
     "existing topics/predicates from the map. Predicates are short snake_case (diet, lives_in, likes, "
     "seat_pref). If something changed (new job, moved, new school), set replace=true. Omit `predicate` "
@@ -63,6 +66,7 @@ def tool_defs(memory: Memory) -> list[dict]:
     return [
         {
             "name": "recall",
+            "title": "Recall from personal memory",
             "description": (
                 "Look up the user's personal long-term memory. Call this BEFORE guessing any preference, "
                 "personal detail, history, constraint or relationship of the user, whenever they mention someone "
@@ -84,7 +88,9 @@ def tool_defs(memory: Memory) -> list[dict]:
         },
         {
             "name": "remember",
+            "title": "Save to personal memory",
             "description": REMEMBER_DESC,
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -114,7 +120,9 @@ def tool_defs(memory: Memory) -> list[dict]:
         },
         {
             "name": "reflect",
+            "title": "Update understanding of the user",
             "description": REFLECT_DESC,
+            "annotations": {"readOnlyHint": False, "destructiveHint": False},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -134,7 +142,9 @@ def tool_defs(memory: Memory) -> list[dict]:
         },
         {
             "name": "amend",
+            "title": "Confirm, retract or pin a memory",
             "description": AMEND_DESC,
+            "annotations": {"readOnlyHint": False, "destructiveHint": False},
             "inputSchema": {
                 "type": "object",
                 "properties": {
