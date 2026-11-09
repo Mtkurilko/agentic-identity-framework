@@ -51,6 +51,7 @@ Readers MUST preserve unknown fields when re-exporting and MUST otherwise ignore
 | `define` | `p` | `card topic desc` | declare a predicate; `card` is `one` or `many` |
 | `belief` | `about text src by` | `conf kind basis revises reason ev sens` | a hypothesis about `me` or an entity (§3.6) |
 | `evidence` | `ref dir src by` | `reason basis ev` | `dir` `+` supports, `-` contradicts a belief |
+| `merge` | `from into src by` | `reason ev` | two entity ids are the same person or thing (§3.4) |
 
 Field meanings:
 - `s` subject (`me` = the owner; otherwise a snake_case name), `p` predicate (snake_case),
@@ -134,6 +135,14 @@ exact id → name → alias → first name → relation word ("my sister", "sis"
 ("my sibling" finds a sister, never the reverse). When the top two candidates are within 0.1 of each
 other, the mention is **ambiguous** and a writer MUST ask instead of choosing.
 
+**Merging.** When the owner says two entities are one (`thomas` and `thomas_bruce`), a `merge`
+event folds `from` into `into`. On replay, every fact about `from` moves to `into` and keeps its
+key, so ids handed out before the merge still resolve. `from`'s `name` becomes an `alias`. A moved
+fact that `into` already holds (same predicate and value, or a second `kind`) is closed with reason
+`merged into <id>`, so nothing counts twice. Notes and beliefs about `from` move too. Later events
+that still name `from` as `s` or `about` are redirected, following chains of merges. Merging into or
+out of `me`, or an entity into itself, is reported as a problem and ignored.
+
 **Descriptive resolution** ("the kid I coach"), for when nothing above matches: each entity gets a
 profile document. It is built from its name and aliases, relations, kind, projected age band
 (`minor`/`adult`/`senior`), its facts, facts that point at it, **one hop through shared values**
@@ -179,6 +188,8 @@ section, capped at a small share of the capsule budget (reference: 6 items, 15%)
 6. Writers SHOULD reuse existing topics and predicates.
 7. Facts about someone else MUST use their entity id as `s`. An ambiguous mention MUST be resolved
    with the owner, not guessed.
+8. A `merge` MUST be `src: U` with the owner's words in `ev`. A model that only suspects two entries
+   are the same asks.
 
 ## 5. Sensitivity
 

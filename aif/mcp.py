@@ -44,7 +44,9 @@ REFLECT_DESC = (
 AMEND_DESC = (
     "Change the status of a stored item by its [id] (from recall or the capsule). confirm = the user just "
     "confirmed it (evidence = their words). retract = no longer true or wrong. pin/unpin = always include "
-    "it in context (user's explicit request only). History is kept; nothing is deleted.")
+    "it in context (user's explicit request only). merge = the user says two people/things on file are the same: "
+    "pass the duplicate as `id`, the one to keep as `into`, and their words as evidence. History is kept; nothing is "
+    "deleted.")
 
 
 def tool_defs(memory: Memory) -> list[dict]:
@@ -130,7 +132,8 @@ def tool_defs(memory: Memory) -> list[dict]:
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
-                    "action": {"type": "string", "enum": ["confirm", "retract", "pin", "unpin"]},
+                    "action": {"type": "string", "enum": ["confirm", "retract", "pin", "unpin", "merge"]},
+                    "into": {"type": "string", "description": "merge only: the person/thing to keep (name or [id])"},
                     "evidence": {"type": "string", "description": "The user's words"},
                     "reason": {"type": "string"},
                     "model": {"type": "string"},
@@ -227,7 +230,7 @@ class Server:
                                  kind=args.get("kind"), model=args.get("model"))
             elif name == "amend":
                 text = m.amend(args["id"], args["action"], evidence=args.get("evidence"),
-                               reason=args.get("reason"), model=args.get("model"))
+                               reason=args.get("reason"), model=args.get("model"), into=args.get("into"))
             else:
                 return {"content": [{"type": "text", "text": f"Unknown tool {name!r}"}], "isError": True}
         except (KeyError, ValueError) as e:

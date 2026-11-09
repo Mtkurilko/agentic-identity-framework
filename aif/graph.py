@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from aif.events import SENSITIVITY, belief_id, fact_key, note_id, parse_time, validate
+from aif.events import ME, SENSITIVITY, belief_id, fact_key, norm, note_id, parse_time, validate
 
 # Days for salience to halve without reinforcement. Inferences fade fastest.
 HALF_LIFE = {"U": 365.0, "X": 270.0, "I": 90.0}
@@ -202,6 +202,7 @@ class Graph:
         self.notes: dict[str, Note] = {}
         self.beliefs: dict[str, Belief] = {}
         self.predicates: dict[str, dict] = {}
+        self.same_as: dict[str, str] = {}  # merged entity id -> the id it was folded into
         self.problems: list[str] = []
         self.event_count = 0
         self.last_t = ""
@@ -238,10 +239,11 @@ class Graph:
                 entry[k] = ev[k]
 
     def _op_assert(self, ev):
-        key = fact_key(ev["s"], ev["p"], ev["o"])
+        s = self.canon(ev["s"])
+        key = fact_key(s, ev["p"], ev["o"])
         fact = self.facts.get(key)
         if fact is None:
-            fact = self.facts[key] = Fact(key=key, s=ev["s"], p=ev["p"], o=ev["o"], topic=ev["topic"],
+            fact = self.facts[key] = Fact(key=key, s=s, p=ev["p"], o=ev["o"], topic=ev["topic"],
                                           first_t=ev["t"])
         elif not fact.open and not ev.get("until"):
             fact.closed_at = fact.close_reason = fact.closed_by = None  # re-asserted: reopen
@@ -310,12 +312,49 @@ class Graph:
         nid = note_id(ev)
         self.notes[nid] = Note(id=nid, t=ev["t"], topic=ev["topic"], text=ev["text"], src=ev["src"],
                                by=ev.get("by", "unknown"), title=ev.get("title"),
-                               sens=ev.get("sens", "personal"), about=ev.get("about"))
+                               sens=ev.get("sens", "personal"), about=self.canon(ev.get("about")))
+
+    def _op_merge(self, ev):
+        """Two entities turned out to be one person or thing: fold `from` into `into`.
+
+        Facts keep their keys, so ids handed out earlier still work. The old name becomes an alias,
+        and anything `into` already says is closed as a duplicate instead of counted twice.
+        """
+        old, new = self.canon(ev["from"]), self.canon(ev["into"])
+        if old == new or ME in (old, new):
+            self.problems.append(f"{ev['id']}: can't merge {old!r} into {new!r}")
+            return
+        self.same_as[old] = new
+        have = {(f.p, norm(f.o)) for f in self.facts.values() if f.s == new and f.open}
+        names = {o for p, o in have if p in ("name", "alias")}
+        for f in self.facts.values():
+            if f.s != old:
+                continue
+            f.s = new
+            if f.p == "name":
+                f.p = "alias"
+            dup = norm(f.o) in names if f.p == "alias" else (f.p, norm(f.o)) in have
+            if f.open and (dup or f.p == "kind" and any(p == "kind" for p, _ in have)):
+                f.closed_at, f.close_reason = ev["t"], f"merged into {new}"
+        for n in self.notes.values():
+            if n.about == old:
+                n.about = new
+        for b in self.beliefs.values():
+            if b.about == old:
+                b.about = new
+
+    def canon(self, s: str | None) -> str | None:
+        """The id an entity lives under now, following merges."""
+        seen = set()
+        while s in self.same_as and s not in seen:
+            seen.add(s)
+            s = self.same_as[s]
+        return s
 
     def _op_belief(self, ev):
         bid = belief_id(ev)
         prior = min(BELIEF_PRIOR_MAX, max(0.05, float(ev.get("conf", 0.4)))) if ev["src"] != "U" else 0.6
-        b = self.beliefs[bid] = Belief(id=bid, about=ev["about"], text=ev["text"], t=ev["t"], by=ev["by"],
+        b = self.beliefs[bid] = Belief(id=bid, about=self.canon(ev["about"]), text=ev["text"], t=ev["t"], by=ev["by"],
                                        prior=prior, kind=ev.get("kind"), src=ev["src"],
                                        sens=ev.get("sens", "personal"), basis=list(ev.get("basis", [])),
                                        revises=ev.get("revises"), last_t=ev["t"])

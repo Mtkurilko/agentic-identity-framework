@@ -552,8 +552,37 @@ class Memory:
             return f"revised [{b.id}] → [{new.id}] {new.text} ({new.conf:.2f}); the old reading is kept as history"
         return "ERROR: action must be propose, support, contradict or revise."
 
-    def amend(self, ref: str, action: str, *, evidence: str | None = None, reason: str | None = None,
+    def merge(self, ref: str, into: str, *, evidence: str | None = None, reason: str | None = None,
               model: str | None = None) -> str:
+        """Fold one entity into another once the user says they're the same person or thing."""
+        if not (evidence or "").strip():
+            return ("REFUSED: only the user can say two entries are the same, so pass their words as evidence. "
+                    "If you only suspect it, ask them.")
+        people, picked = self.people(), []
+        for mention in (ref, into):
+            hits = [h for h in ent.resolve(people, mention) if h[1] >= 0.85]
+            if not hits:
+                return f"UNKNOWN: nobody on file matches {mention!r}. Use recall to find their [id]."
+            if ent.ambiguous(hits):
+                names = " or ".join(f"{ent.label(e)} [{e.id}]" for e, _, _ in hits[:3])
+                return f"AMBIGUOUS: {mention!r} could be {names}. Call again with ids."
+            picked.append(hits[0][0])
+        old, new = picked
+        if old.id == new.id:
+            return f"nothing to merge: both are {ent.label(new)} [{new.id}]"
+        by = model or self.contributor
+        ev = {"t": self._stamp(), "op": "merge", "from": old.id, "into": new.id, "src": "U", "by": by,
+              "ev": evidence, "reason": reason}
+        self._commit([ev], f"[by:{by}] merge [{old.id}] into [{new.id}]")
+        merged = self.people()[new.id]
+        return f"merged {ent.label(old)} [{old.id}] into [{new.id}]: now {merged.summary(self.now())}"
+
+    def amend(self, ref: str, action: str, *, evidence: str | None = None, reason: str | None = None,
+              model: str | None = None, into: str | None = None) -> str:
+        if action == "merge":
+            if not into:
+                return "ERROR: merge needs `into`: the entry to keep."
+            return self.merge(ref, into, evidence=evidence, reason=reason, model=model)
         item = self.graph.find(ref)
         if item is None:
             return f"ERROR: no fact or note with id {ref!r}. Use recall to find ids."
@@ -587,7 +616,7 @@ class Memory:
         elif action == "unpin":
             ev = {**base, "op": "unpin"}
         else:
-            return "ERROR: action must be confirm, retract, pin or unpin."
+            return "ERROR: action must be confirm, retract, pin, unpin or merge."
         self._commit([ev], f"[by:{by}] {action} [{ref}]" + (f": {reason}" if reason else ""))
         after = self.graph.find(ref)
         return f"{action}ed [{ref}]" + (f": now {fact_line(after)}" if isinstance(after, Fact) else "")

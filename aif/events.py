@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timezone
 
 SCHEMA = 1
-OPS = ("assert", "retract", "confirm", "pin", "unpin", "note", "define", "belief", "evidence")
+OPS = ("assert", "retract", "confirm", "pin", "unpin", "note", "define", "belief", "evidence", "merge")
 SOURCES = {"U": "user_stated", "I": "inferred", "X": "imported"}
 SOURCE_ALIASES = {"u": "U", "user": "U", "user_stated": "U", "stated": "U",
                   "i": "I", "inferred": "I", "model_inferred": "I", "guess": "I",
@@ -31,6 +31,7 @@ REQUIRED = {
     "define": ("p",),
     "belief": ("about", "text", "src", "by"),
     "evidence": ("ref", "dir", "src", "by"),
+    "merge": ("from", "into", "src", "by"),
 }
 
 

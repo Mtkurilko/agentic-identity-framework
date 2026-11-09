@@ -366,6 +366,63 @@ class EntityTests(Base):
         self.assertIn("Rebecca: sister", tools[0]["description"])
 
 
+class MergeTests(Base):
+    def two_toms(self):
+        self.said("people", "likes", "C", subject="Thomas", subject_relation="friend")
+        self.said("research", "coauthored", "record linkage paper", subject="Thomas Bruce",
+                  subject_relation="research collaborator")
+        self.mem.note("people", "Thomas Bruce presented with me at the tech meet", "user_stated",
+                      evidence="(user said so)", subject="Thomas Bruce")
+
+    def test_merge_folds_one_entry_into_the_other(self):
+        self.two_toms()
+        self.assertIn("AMBIGUOUS", self.mem.recall("Thomas"))
+        out = self.mem.merge("thomas_bruce", "thomas", evidence="they're the same person")
+        self.assertIn("merged Thomas Bruce (research collaborator) [thomas_bruce] into [thomas]", out)
+        people = self.mem.people()
+        self.assertNotIn("thomas_bruce", people)
+        tom = people["thomas"]
+        self.assertEqual(tom.aliases, ["Thomas Bruce"])
+        self.assertEqual(tom.relations, ["friend", "research_collaborator"])
+        self.assertEqual(sorted(f.o for f in tom.facts), ["C", "record linkage paper"])
+        self.assertEqual(len(tom.notes), 1)
+        self.assertNotIn("AMBIGUOUS", self.mem.recall("Thomas"))
+        self.assertIn("record linkage paper", self.mem.recall("Thomas Bruce"))
+
+    def test_old_ids_and_later_writes_follow_the_merge(self):
+        self.two_toms()
+        key = fact_key("thomas_bruce", "coauthored", "record linkage paper")
+        self.assertIn("AMBIGUOUS", self.mem.merge("Thomas Bruce", "Thomas", evidence="same guy"))
+        self.mem.merge("Thomas Bruce", "thomas", evidence="same guy")
+        self.assertTrue(self.mem.amend(key, "confirm", evidence="yes").startswith("confirmed"))
+        self.said("people", "lives_in", "Poughkeepsie", subject="Thomas Bruce")
+        self.assertIn("Poughkeepsie", [f.o for f in self.mem.people()["thomas"].facts])
+
+    def test_duplicates_close_instead_of_doubling(self):
+        self.said("people", "likes", "C", subject="Thomas", subject_relation="friend")
+        self.said("people", "likes", "C", subject="Tom", subject_relation="friend", subject_kind="person")
+        self.mem.merge("tom", "thomas", evidence="same")
+        tom = self.mem.people()["thomas"]
+        self.assertEqual([f.o for f in tom.facts], ["C"])
+        self.assertEqual((tom.kind, tom.relations, tom.aliases), ("person", ["friend"], ["Tom"]))
+
+    def test_merge_needs_the_users_words_and_survives_replay(self):
+        self.two_toms()
+        self.assertTrue(self.mem.merge("thomas_bruce", "thomas").startswith("REFUSED"))
+        self.assertTrue(self.mem.merge("me", "thomas", evidence="x").startswith(("UNKNOWN", "AMBIGUOUS")))
+        self.mem.merge("thomas_bruce", "thomas", evidence="same person")
+        fresh = self.memory()
+        self.assertNotIn("thomas_bruce", fresh.people())
+        self.assertEqual(fresh.graph.problems, [])
+
+    def test_mcp_amend_merge(self):
+        self.two_toms()
+        reply = Server(self.mem, out=io.StringIO()).handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "amend", "arguments": {"id": "thomas_bruce", "action": "merge", "into": "thomas",
+                                                      "evidence": "they're the same person"}}})
+        self.assertIn("merged", reply["result"]["content"][0]["text"])
+
+
 class DescriptiveLookupTests(Base):
     def setUp(self):
         super().setUp()

@@ -86,6 +86,10 @@ def _amend(action):
     return run
 
 
+def cmd_merge(args):
+    print(_memory(args).merge(args.id, args.into, evidence=CLI_EVIDENCE, reason=args.reason))
+
+
 def cmd_show(args):
     mem = _memory(args, clearance=args.clearance or "secret")
     text = mem.export_wiki()
@@ -271,6 +275,12 @@ def main(argv=None) -> int:
         s.add_argument("id")
         s.add_argument("--reason")
         s.set_defaults(fn=_amend(action))
+
+    s = sub.add_parser("merge", help="fold a duplicate person/thing into another (same person, two entries)")
+    s.add_argument("id", help="the duplicate (name or id)")
+    s.add_argument("into", help="the one to keep")
+    s.add_argument("--reason")
+    s.set_defaults(fn=cmd_merge)
 
     s = sub.add_parser("show", help="human-readable wiki of everything (optionally one topic)")
     s.add_argument("topic", nargs="?")
